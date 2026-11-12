@@ -2,6 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -40,7 +41,10 @@ void feed(FindNoteProcessor& processor, int channels, double hz, int stereoMode 
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI initialise;
     try {
-        FindNoteProcessor processor;
+        // Each processor contains a 512 KiB FIFO. Two stack instances exceed
+        // MSVC's default 1 MiB stack; use heap ownership, as the plugin factory does.
+        const auto processorOwner = std::make_unique<FindNoteProcessor>();
+        auto& processor = *processorOwner;
         processor.prepareToPlay(48000.0, 256);
         feed(processor, 2, 440.0, 1);
         feed(processor, 2, 110.0, 2);
@@ -53,7 +57,8 @@ int main(int argc, char** argv) {
         reference->setValueNotifyingHost(reference->convertTo0to1(442.0f));
         juce::MemoryBlock state;
         processor.getStateInformation(state);
-        FindNoteProcessor restored;
+        const auto restoredOwner = std::make_unique<FindNoteProcessor>();
+        auto& restored = *restoredOwner;
         restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
         require(std::abs(restored.parameters.getRawParameterValue("reference")->load() - 442.0f) < 0.01f, "State not restored");
         const char invalid[] = "invalid state";

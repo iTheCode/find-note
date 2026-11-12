@@ -31,6 +31,50 @@ def cmake_tool():
     raise RuntimeError('Install CMake >= 3.22 or use scripts/build-macos.sh to bootstrap it locally.')
 
 
+NOTARY_VARS = ('ASC_KEY_ID', 'ASC_ISSUER_ID', 'ASC_KEY_PATH')
+
+
+def macos_signing():
+    """Developer ID identity from MACOS_SIGN_IDENTITY, or None for ad-hoc sealing.
+
+    Gatekeeper only accepts downloaded bundles that are Developer ID signed and
+    notarized, so a real identity requires the App Store Connect API key too.
+    """
+    identity = os.environ.get('MACOS_SIGN_IDENTITY', '').strip()
+    if not identity:
+        return None
+    if not identity.startswith('Developer ID Application:'):
+        raise ValueError('MACOS_SIGN_IDENTITY must be a "Developer ID Application" identity')
+    missing = [name for name in NOTARY_VARS if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError('Notarization needs ' + ', '.join(missing))
+    return identity
+
+
+def sign_macos(bundle, identity):
+    if not identity:
+        # Ad-hoc sealing for local/PR builds: Gatekeeper blocks these when downloaded.
+        run('codesign', '--force', '--sign', '-', bundle)
+    else:
+        run('codesign', '--force', '--timestamp', '--options', 'runtime', '--sign', identity, bundle)
+    run('codesign', '--verify', '--deep', '--strict', '--verbose=2', bundle)
+
+
+def notarize_macos(bundles, build_dir):
+    build_dir.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix='notarize-', dir=build_dir))
+    for bundle in bundles:
+        run('ditto', bundle, stage / 'bundles' / bundle.name)
+    submission = stage / 'FindNote-notarize.zip'
+    run('ditto', '-c', '-k', '--keepParent', stage / 'bundles', submission)
+    run('xcrun', 'notarytool', 'submit', submission, '--wait', '--timeout', '30m',
+        '--key', os.environ['ASC_KEY_PATH'], '--key-id', os.environ['ASC_KEY_ID'],
+        '--issuer', os.environ['ASC_ISSUER_ID'])
+    for bundle in bundles:
+        run('xcrun', 'stapler', 'staple', bundle)
+        run('xcrun', 'stapler', 'validate', bundle)
+
+
 def build(args):
     if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', args.version):
         raise ValueError('Version must be MAJOR.MINOR.PATCH')
@@ -47,6 +91,7 @@ def build(args):
     archive = output / (stem + '.zip')
     if args.package and any((output / (stem + suffix)).exists() for suffix in ('.zip', '.zip.sha256', '.json')):
         raise FileExistsError(f'Package already exists: {archive}. Use a different --dist-dir; no files were removed.')
+    signing = macos_signing() if system == 'Darwin' else None
     cmake = cmake_tool()
     config = [cmake, '-S', ROOT, '-B', build_dir, '-DCMAKE_BUILD_TYPE=Release',
               '-DFINDNOTE_VERSION=' + args.version, '-DBUILD_TESTING=ON', '-DFINDNOTE_BUILD_PLUGIN=ON',
@@ -83,9 +128,10 @@ def build(args):
             if info['CFBundleShortVersionString'] != args.version:
                 raise RuntimeError(f'Incorrect embedded version: {bundle}')
             run('lipo', bundle / 'Contents/MacOS/FindNote', '-verify_arch', architecture)
-            # Ad hoc sealing is not Avid/PACE signing or Apple notarization.
-            run('codesign', '--force', '--sign', '-', bundle)
-            run('codesign', '--verify', '--deep', '--strict', bundle)
+            # AAX stays ad-hoc: Avid/PACE wrapping re-signs it separately.
+            sign_macos(bundle, None if kind == 'AAX' else signing)
+    if system == 'Darwin' and signing:
+        notarize_macos([products / kind / filename for kind, filename in formats.items() if kind != 'AAX'], build_dir)
     manifest = products / 'VST3/FindNote.vst3/Contents/Resources/moduleinfo.json'
     if f'"Version": "{args.version}"' not in manifest.read_text(encoding='utf-8'):
         raise RuntimeError('VST3 manifest version does not match the requested version')

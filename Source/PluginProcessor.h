@@ -25,6 +25,8 @@ public:
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
     findnote::Reading getReading() const;
+    findnote::PeakResults getResults() const;
+    void startNewAnalysis() { resetAnalysis.store(true); }
     juce::AudioProcessorValueTreeState parameters;
 private:
     void run() override;
@@ -36,6 +38,9 @@ private:
     std::vector<float> frame;
     mutable juce::CriticalSection readingLock;
     findnote::Reading latest;
+    findnote::PeakResults history, publishedResults;
+    std::atomic<bool> resetAnalysis { false };
+    std::atomic<float>* reference = nullptr;
     std::atomic<float>* low = nullptr;
     std::atomic<float>* high = nullptr;
     std::atomic<float>* gate = nullptr;

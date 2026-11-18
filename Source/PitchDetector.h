@@ -5,11 +5,26 @@
 #include <vector>
 
 namespace findnote {
+struct SpectralPeak {
+    double frequency = 0.0;
+    double power = 0.0; // Squared, window-normalised sinusoidal amplitude.
+};
+
 struct Reading {
     double frequency = 0.0;
     float confidence = 0.0f;
     float rmsDb = -100.0f;
     std::array<float, 192> spectrum {};
+    std::array<SpectralPeak, 128> peaks {}; // Strongest eligible peak per MIDI note.
+};
+
+// Fixed-size capture: keep maxima, so repetition/looping does not inflate scores.
+struct PeakResults {
+    std::array<SpectralPeak, 128> notes {};
+    std::array<float, 192> spectrum {};
+    int principal = -1;
+    void add(const Reading&);
+    double percentage(int midi) const;
 };
 
 struct Note {
@@ -27,7 +42,7 @@ public:
     void resetTracking();
     int frameSize() const { return size; }
     Reading analyse(const float* samples, double lowHz = 35.0,
-                    double highHz = 2000.0, float gateDb = -60.0f);
+                    double highHz = 2000.0, float gateDb = -60.0f, double concertA = 440.0);
 private:
     static void fft(std::vector<std::complex<double>>& values);
     double rate = 48000.0;

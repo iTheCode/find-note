@@ -18,6 +18,7 @@ FindNoteProcessor::FindNoteProcessor()
     low = parameters.getRawParameterValue("low");
     high = parameters.getRawParameterValue("high");
     gate = parameters.getRawParameterValue("gate");
+    reference = parameters.getRawParameterValue("reference");
 }
 
 FindNoteProcessor::~FindNoteProcessor() { stopThread(-1); }
@@ -32,12 +33,14 @@ void FindNoteProcessor::prepareToPlay(double sampleRate, int) {
     stopThread(-1);
     fifo.reset();
     discontinuity.store(false);
+    resetAnalysis.store(false);
+    history = {};
     analysisChannel = 0;
     channelEnergy = {};
     analysisSampleRate = sampleRate;
     detector.prepare(sampleRate);
     frame.assign(static_cast<size_t>(detector.frameSize()), 0.0f);
-    { const juce::ScopedLock lock(readingLock); latest = {}; }
+    { const juce::ScopedLock lock(readingLock); latest = {}; publishedResults = {}; }
     setLatencySamples(0);
     startThread();
 }
@@ -76,7 +79,21 @@ void FindNoteProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 void FindNoteProcessor::run() {
     int filled = 0;
     auto lastInput = juce::Time::getMillisecondCounter();
+    std::array<float, 4> previousSettings { low->load(), high->load(), gate->load(), reference->load() };
     while (!threadShouldExit()) {
+        const std::array<float, 4> settings { low->load(), high->load(), gate->load(), reference->load() };
+        const auto requestedReset = resetAnalysis.exchange(false);
+        if (requestedReset || settings != previousSettings) {
+            // Discard queued/overlapping audio from the previous capture.
+            fifo.finishedRead(fifo.getNumReady());
+            filled = 0;
+            detector.resetTracking();
+            history = {};
+            previousSettings = settings;
+            const juce::ScopedLock lock(readingLock);
+            latest = {};
+            publishedResults = {};
+        }
         if (discontinuity.exchange(false)) {
             fifo.finishedRead(fifo.getNumReady());
             filled = 0;
@@ -92,8 +109,9 @@ void FindNoteProcessor::run() {
         filled += size1 + size2;
         if (size1 + size2 > 0) lastInput = juce::Time::getMillisecondCounter();
         if (filled == detector.frameSize()) {
-            const auto value = detector.analyse(frame.data(), low->load(), high->load(), gate->load());
-            { const juce::ScopedLock lock(readingLock); latest = value; }
+            const auto value = detector.analyse(frame.data(), settings[0], settings[1], settings[2], settings[3]);
+            history.add(value);
+            { const juce::ScopedLock lock(readingLock); latest = value; publishedResults = history; }
             const auto hop = detector.frameSize() / 4;
             std::memmove(frame.data(), frame.data() + hop, static_cast<size_t>(detector.frameSize() - hop) * sizeof(float));
             filled -= hop;
@@ -112,6 +130,11 @@ void FindNoteProcessor::run() {
 findnote::Reading FindNoteProcessor::getReading() const {
     const juce::ScopedLock lock(readingLock);
     return latest;
+}
+
+findnote::PeakResults FindNoteProcessor::getResults() const {
+    const juce::ScopedLock lock(readingLock);
+    return resetAnalysis.load() ? findnote::PeakResults{} : publishedResults;
 }
 
 void FindNoteProcessor::getStateInformation(juce::MemoryBlock& destination) {

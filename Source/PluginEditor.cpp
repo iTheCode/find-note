@@ -4,6 +4,10 @@
 
 namespace {
 const juce::Colour cream(0xfff4e9ce), neon(0xff26baff), dark(0xff101820);
+juce::String noteName(int midi) {
+    const char* names[] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    return juce::String(names[(midi % 12 + 12) % 12]) + juce::String(midi / 12 - 1);
+}
 void text(juce::Graphics& g, const juce::String& value, juce::Rectangle<int> bounds,
           float height, juce::Colour colour, juce::Justification align = juce::Justification::centredLeft) {
     g.setColour(colour);
@@ -95,14 +99,58 @@ FindNoteEditor::FindNoteEditor(FindNoteProcessor& p)
             parameter->setValueNotifyingHost(parameter->getDefaultValue());
             parameter->endChangeGesture();
         }
+        owner.startNewAnalysis();
     };
     addAndMakeVisible(reset);
-    reading = owner.getReading();
+    newAnalysis.onClick = [this] { owner.startNewAnalysis(); timerCallback(); };
+    newAnalysis.setTooltip("Limpia los picos guardados. Pulsalo antes de reproducir otro sample.");
+    addAndMakeVisible(newAnalysis);
+    resultTable.setColour(juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
+    resultTable.setColour(juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
+    resultTable.setRowHeight(26);
+    resultTable.setWantsKeyboardFocus(false);
+    addAndMakeVisible(resultTable);
+    timerCallback();
     setSize(760, 520);
     startTimerHz(30);
 }
 
-FindNoteEditor::~FindNoteEditor() { stopTimer(); setLookAndFeel(nullptr); }
+FindNoteEditor::~FindNoteEditor() { stopTimer(); resultTable.setModel(nullptr); setLookAndFeel(nullptr); }
+
+void FindNoteEditor::timerCallback() {
+    reading = owner.getReading();
+    results = owner.getResults();
+    resultRows.clear();
+    for (size_t i = 0; i < results.notes.size(); ++i)
+        if (results.notes[i].power > 0.0) resultRows.push_back(static_cast<int>(i));
+    std::sort(resultRows.begin(), resultRows.end(), [this](int a, int b) {
+        if (a == b) return false;
+        const auto pa = results.notes[static_cast<size_t>(a)].power;
+        const auto pb = results.notes[static_cast<size_t>(b)].power;
+        if (pa > pb) return true;
+        if (pa < pb) return false;
+        if (a == results.principal || b == results.principal) return a == results.principal;
+        return a < b;
+    });
+    resultTable.updateContent();
+    resultTable.repaint();
+    repaint();
+}
+
+void FindNoteEditor::paintListBoxItem(int row, juce::Graphics& g, int width, int height, bool) {
+    if (row < 0 || row >= static_cast<int>(resultRows.size())) return;
+    const auto midi = resultRows[static_cast<size_t>(row)];
+    const auto& peak = results.notes[static_cast<size_t>(midi)];
+    const auto percent = results.percentage(midi);
+    g.setColour(neon.withAlpha(midi == results.principal ? 0.17f : 0.06f));
+    g.fillRoundedRectangle(0.0f, 1.0f, static_cast<float>(width) * static_cast<float>(percent / 100.0),
+                           static_cast<float>(height - 2), 4.0f);
+    const auto colour = midi == results.principal ? neon : cream;
+    text(g, noteName(midi), {8, 0, 70, height}, 15.0f, colour);
+    text(g, juce::String(peak.frequency, 1), {82, 0, 100, height}, 13.0f, cream, juce::Justification::centredRight);
+    const auto percentText = percent < 0.1 ? juce::String("<0.1%") : juce::String(percent, 1) + "%";
+    text(g, percentText, {width - 83, 0, 75, height}, 14.0f, colour, juce::Justification::centredRight);
+}
 
 void FindNoteEditor::resized() {
     for (size_t i = 0; i < sliders.size(); ++i) {
@@ -111,6 +159,8 @@ void FindNoteEditor::resized() {
         sliders[i].setBounds(x, 453, 143, 48);
     }
     reset.setBounds(637, 455, 101, 32);
+    newAnalysis.setBounds(570, 24, 166, 32);
+    resultTable.setBounds(420, 116, 306, 145);
 }
 
 void FindNoteEditor::paint(juce::Graphics& g) {
@@ -131,20 +181,32 @@ void FindNoteEditor::paint(juce::Graphics& g) {
         g.drawText(value, bounds, align);
     };
     displayText("FINDNOTE", {31, 16, 280, 42}, 35.0f, cream);
-    text(g, "REFERENCIA AUTOMATICA / PICO MAYOR ESTABLE", {33, 59, 330, 20}, 11.0f, neon);
+    text(g, "NOTA PRINCIPAL / MAYOR PICO GUARDADO", {33, 59, 340, 20}, 11.0f, neon);
     const auto low = owner.parameters.getRawParameterValue("low")->load();
     const auto high = owner.parameters.getRawParameterValue("high")->load();
     const auto validRange = low < high;
-    const auto valid = reading.frequency > 0.0 && validRange;
-    const auto note = findnote::noteForFrequency(reading.frequency, owner.parameters.getRawParameterValue("reference")->load());
+    const auto frequency = results.principal >= 0 ? results.notes[static_cast<size_t>(results.principal)].frequency : 0.0;
+    const auto valid = frequency > 0.0 && validRange;
+    const auto note = findnote::noteForFrequency(frequency, owner.parameters.getRawParameterValue("reference")->load());
     const char* names[] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
     const char* latin[] { "Do", "Do sostenido", "Re", "Re sostenido", "Mi", "Fa", "Fa sostenido", "Sol", "Sol sostenido", "La", "La sostenido", "Si" };
     const auto noteText = valid ? juce::String(names[note.pitchClass]) + juce::String(note.octave) : "--";
     displayText(noteText, {32, 92, 360, 110}, 112.0f, juce::Colours::black.withAlpha(0.45f));
     displayText(noteText, {28, 88, 360, 110}, 112.0f, cream);
-    text(g, valid ? juce::String(latin[note.pitchClass]) + "  /  " + juce::String(reading.frequency, 2) + " Hz"
+    text(g, valid ? juce::String(latin[note.pitchClass]) + "  /  " + juce::String(frequency, 2) + " Hz"
                   : validRange ? "Esperando una nota..." : "Desde debe ser menor que Hasta",
          {33, 201, 390, 27}, 18.0f, cream.withAlpha(0.85f));
+    text(g, valid ? juce::String(results.percentage(results.principal), 1) + "% del peso de picos guardados"
+                  : "Reproduce un sample para acumular resultados",
+         {33, 226, 365, 18}, 12.0f, neon);
+    g.setColour(dark.withAlpha(0.9f));
+    g.fillRoundedRectangle(410.0f, 84.0f, 326.0f, 202.0f, 12.0f);
+    text(g, "NOTAS", {428, 92, 70, 20}, 12.0f, neon);
+    text(g, "PICO Hz", {510, 92, 90, 20}, 12.0f, neon, juce::Justification::centredRight);
+    text(g, "PESO %", {642, 92, 70, 20}, 12.0f, neon, juce::Justification::centredRight);
+    if (resultRows.empty()) text(g, "Sin resultados guardados", {428, 128, 275, 24}, 14.0f, cream.withAlpha(0.65f));
+    text(g, juce::String(static_cast<int>(resultRows.size())) + " notas / Peso relativo, no probabilidad",
+         {422, 266, 306, 16}, 10.0f, cream.withAlpha(0.65f));
     const auto cents = valid ? note.cents : 0.0;
     const auto inTune = valid && std::abs(cents) <= 5.0;
     const auto indicator = inTune ? juce::Colour(0xffb0eaff) : neon;
@@ -166,8 +228,10 @@ void FindNoteEditor::paint(juce::Graphics& g) {
     text(g, valid ? (cents > 0.0 ? "+" : "") + juce::String(cents, 1) + " cents" : "cents",
          {110, 266, 166, 20}, 13.0f, indicator, juce::Justification::centred);
     text(g, "+50", {321, 267, 40, 18}, 11.0f, cream.withAlpha(0.5f));
-    displayText("ESPECTRO", {38, 305, 160, 20}, 15.0f, cream);
-    text(g, valid ? "AUTO  /  " + juce::String(reading.frequency, 1) + " Hz" : "BUSCANDO PICO", {510, 305, 210, 18}, 10.0f, neon, juce::Justification::centredRight);
+    displayText("ESPECTRO / MAXIMOS", {38, 305, 240, 20}, 15.0f, cream);
+    text(g, reading.frequency > 0.0 ? "AHORA: " + juce::String(reading.frequency, 1) + " Hz / ACUMULANDO"
+                                   : valid ? "SIN SENAL / RESULTADOS CONSERVADOS" : "BUSCANDO PICOS",
+         {390, 305, 330, 18}, 10.0f, neon, juce::Justification::centredRight);
     const auto frequencyX = [](double hz) { return 40.0f + static_cast<float>(std::log(hz / 35.0) / std::log(2000.0 / 35.0)) * 678.0f; };
     if (validRange) {
         g.setColour(neon.withAlpha(0.045f));
@@ -176,7 +240,7 @@ void FindNoteEditor::paint(juce::Graphics& g) {
     juce::Path spectrum;
     for (size_t i = 0; i < reading.spectrum.size(); ++i) {
         const auto x = 40.0f + static_cast<float>(i) / static_cast<float>(reading.spectrum.size() - 1) * 678.0f;
-        const auto y = 380.0f - reading.spectrum[i] * 49.0f;
+        const auto y = 380.0f - results.spectrum[i] * 49.0f;
         if (i == 0) spectrum.startNewSubPath(x, y); else spectrum.lineTo(x, y);
     }
     auto fill = spectrum;
@@ -192,9 +256,9 @@ void FindNoteEditor::paint(juce::Graphics& g) {
     }
     if (valid) {
         g.setColour(indicator);
-        g.drawVerticalLine(static_cast<int>(frequencyX(reading.frequency)), 328.0f, 382.0f);
+        g.drawVerticalLine(static_cast<int>(frequencyX(frequency)), 328.0f, 382.0f);
     }
     text(g, "35 Hz", {40, 385, 70, 16}, 10.0f, cream.withAlpha(0.55f));
-    text(g, "PICO DOMINANTE  /  AUDIO SIN CAMBIOS", {175, 385, 420, 16}, 10.0f, cream.withAlpha(0.55f), juce::Justification::centred);
+    text(g, "MAXIMOS RETENIDOS / NUEVO ANALISIS PARA OTRO SAMPLE", {135, 385, 490, 16}, 10.0f, cream.withAlpha(0.55f), juce::Justification::centred);
     text(g, "2 kHz", {650, 385, 70, 16}, 10.0f, cream.withAlpha(0.55f), juce::Justification::centredRight);
 }

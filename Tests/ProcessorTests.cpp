@@ -9,7 +9,7 @@ namespace {
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
-void feed(FindNoteProcessor& processor, int channels, double hz, int stereoMode = 0) {
+void feed(FindNoteProcessor& processor, int channels, double hz, int stereoMode = 0, float gain = 1.0f) {
     juce::AudioBuffer<float> buffer(channels, 256);
     juce::MidiBuffer midi;
     for (int block = 0; block < 80; ++block) {
@@ -22,7 +22,7 @@ void feed(FindNoteProcessor& processor, int channels, double hz, int stereoMode 
                 if (channel == 1 && stereoMode == 2)
                     channelValue = static_cast<float>(0.5 * std::cos(2.0 * juce::MathConstants<double>::pi * hz * (block * 256 + sample) / 48000.0));
                 if (channel == 0 && stereoMode == 3) channelValue = 0.0f;
-                buffer.setSample(channel, sample, channelValue);
+                buffer.setSample(channel, sample, channelValue * gain);
             }
         }
         juce::AudioBuffer<float> original;
@@ -64,15 +64,6 @@ int main(int argc, char** argv) {
         const char invalid[] = "invalid state";
         restored.setStateInformation(invalid, sizeof(invalid));
         require(std::abs(restored.parameters.getRawParameterValue("reference")->load() - 442.0f) < 0.01f, "Invalid state changed parameters");
-        if (argc > 1) {
-            // Preview: automatic 440-Hz peak above the weaker 220-Hz fundamental.
-            reference->setValueNotifyingHost(reference->convertTo0to1(440.0f));
-            std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
-            auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
-            const auto destination = juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]);
-            juce::FileOutputStream output(destination);
-            require(output.openedOk() && juce::PNGImageFormat().writeImageToStream(snapshot, output), "Preview write failed");
-        }
         juce::Thread::sleep(350);
         require(processor.getReading().frequency == 0.0, "Stale note after transport stops");
         processor.releaseResources();
@@ -90,8 +81,52 @@ int main(int argc, char** argv) {
             juce::Thread::sleep(6);
         }
         require(processor.getReading().frequency == 0.0, "Silence must clear note");
+        require(processor.getResults().principal == 60, "Silence retains captured C4");
         processor.releaseResources();
-        std::cout << "PASS: dominant 2nd/3rd/5th harmonics, stereo, opposite phase, mono, passthrough, reference persistence, invalid state, silence, stopped transport, lifecycle\n";
+        require(processor.getResults().principal == 60, "Releasing audio retains results for inspection");
+        processor.prepareToPlay(48000.0, 256);
+        require(processor.getResults().principal == -1, "Preparing a fresh session clears results");
+        reference->setValueNotifyingHost(reference->convertTo0to1(440.0f));
+        feed(processor, 1, 220.0, 0, 1.2f);
+        feed(processor, 1, 329.6276, 0, 0.7f);
+        feed(processor, 1, 440.0, 0, 0.5f);
+        const auto captured = processor.getResults();
+        require(captured.principal == 57, "Quieter subsequent notes must not replace strongest captured note");
+        require(captured.notes[64].power > 0.1 && captured.notes[69].power > 0.05,
+                "Capture includes other notes with nonzero weights");
+        juce::Thread::sleep(350);
+        require(processor.getReading().frequency == 0.0 && processor.getResults().principal == 57,
+                "Stopped transport clears live reading but retains principal");
+        if (argc > 1) {
+            // Real accumulated results from the three tones above, after playback stops.
+            std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
+            auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
+            const auto destination = juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]);
+            juce::FileOutputStream output(destination);
+            // FileOutputStream opens existing files at the end; replace the PNG
+            // instead of appending a new image behind a stale preview.
+            require(output.openedOk() && output.setPosition(0) && output.truncate().wasOk()
+                    && juce::PNGImageFormat().writeImageToStream(snapshot, output), "Preview write failed");
+        }
+        processor.startNewAnalysis();
+        for (int i = 0; i < 200 && processor.getResults().principal != -1; ++i) juce::Thread::sleep(5);
+        require(processor.getResults().principal == -1, "New analysis clears retained notes");
+        feed(processor, 1, 440.0);
+        require(processor.getResults().principal == 69 && processor.getResults().notes[57].power == 0.0,
+                "New sample must not include earlier capture");
+        const std::array<const char*, 4> ids { "low", "high", "gate", "reference" };
+        const std::array<float, 4> values { 100.0f, 1000.0f, -55.0f, 480.0f };
+        for (size_t i = 0; i < ids.size(); ++i) {
+            auto* parameter = processor.parameters.getParameter(ids[i]);
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(values[i]));
+            for (int poll = 0; poll < 200 && processor.getResults().principal != -1; ++poll) juce::Thread::sleep(5);
+            require(processor.getResults().principal == -1, "Analysis settings must clear results with obsolete interpretation");
+            feed(processor, 1, 440.0);
+            require(processor.getResults().principal == findnote::noteForFrequency(440.0, i == 3 ? 480.0 : 440.0).midi,
+                    "Capture uses current settings");
+        }
+        processor.releaseResources();
+        std::cout << "PASS: dominant 2nd/3rd/5th harmonics, stereo, opposite phase, mono, passthrough, reference persistence, invalid state, silence, stopped transport, lifecycle, accumulated peaks, reset, calibration/range/gate changes\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

@@ -5,6 +5,26 @@
 namespace findnote {
 namespace { constexpr double pi = 3.14159265358979323846; }
 
+void PeakResults::add(const Reading& reading) {
+    for (size_t i = 0; i < notes.size(); ++i) {
+        const auto& peak = reading.peaks[i];
+        if (!std::isfinite(peak.frequency) || !std::isfinite(peak.power)
+            || peak.frequency <= 0.0 || peak.power <= notes[i].power) continue;
+        notes[i] = peak;
+        if (principal < 0 || peak.power > notes[static_cast<size_t>(principal)].power)
+            principal = static_cast<int>(i);
+    }
+    for (size_t i = 0; i < spectrum.size(); ++i)
+        spectrum[i] = std::max(spectrum[i], reading.spectrum[i]);
+}
+
+double PeakResults::percentage(int midi) const {
+    if (midi < 0 || midi >= static_cast<int>(notes.size())) return 0.0;
+    double total = 0.0;
+    for (const auto& peak : notes) total += peak.power;
+    return total > 0.0 ? 100.0 * notes[static_cast<size_t>(midi)].power / total : 0.0;
+}
+
 Note noteForFrequency(double frequency, double concertA) {
     if (!std::isfinite(frequency) || !std::isfinite(concertA)
         || frequency <= 0.0 || concertA <= 0.0) return {};
@@ -62,10 +82,11 @@ void PitchDetector::fft(std::vector<std::complex<double>>& values) {
     }
 }
 
-Reading PitchDetector::analyse(const float* samples, double lowHz, double highHz, float gateDb) {
+Reading PitchDetector::analyse(const float* samples, double lowHz, double highHz, float gateDb, double concertA) {
     Reading result;
     if (transform.empty() || !std::isfinite(lowHz) || !std::isfinite(highHz)
-        || !std::isfinite(gateDb) || lowHz < 35.0 || highHz > 2000.0 || lowHz >= highHz) {
+        || !std::isfinite(gateDb) || !std::isfinite(concertA) || concertA < 400.0 || concertA > 480.0
+        || lowHz < 35.0 || highHz > 2000.0 || lowHz >= highHz) {
         resetTracking();
         return result;
     }
@@ -115,6 +136,16 @@ Reading PitchDetector::analyse(const float* samples, double lowHz, double highHz
 
     const auto first = std::max(1, static_cast<int>(std::floor(35.0 / binHz)) - 1);
     const auto last = std::min(static_cast<int>(power.size()) - 2, static_cast<int>(std::ceil(2000.0 / binHz)) + 1);
+    const auto floorCount = last - first + 1;
+    std::copy_n(power.begin() + first, floorCount, noiseFloor.begin());
+    const auto middle = noiseFloor.begin() + floorCount / 2;
+    std::nth_element(noiseFloor.begin(), middle, noiseFloor.begin() + floorCount);
+    const auto floorPower = std::max(*middle, 1e-30);
+    const auto isEligible = [&](double peakPower) {
+        const auto amplitude = 2.0 * std::sqrt(peakPower) / windowSum;
+        return peakPower / floorPower >= 25.0
+            && 20.0 * std::log10(std::max(amplitude, 1e-15)) >= gateDb;
+    };
     double strongestPower = 0.0;
     double strongestHz = 0.0;
     double trackedPower = 0.0, currentTrackedHz = 0.0;
@@ -123,7 +154,6 @@ Reading PitchDetector::analyse(const float* samples, double lowHz, double highHz
     };
     for (int bin = first; bin <= last; ++bin) {
         const auto index = static_cast<size_t>(bin);
-        noiseFloor[static_cast<size_t>(bin - first)] = power[index];
         if (power[index] <= power[index - 1] || power[index] < power[index + 1]) continue;
         const auto left = std::log(std::max(power[index - 1], 1e-30));
         const auto centre = std::log(std::max(power[index], 1e-30));
@@ -135,6 +165,14 @@ Reading PitchDetector::analyse(const float* samples, double lowHz, double highHz
         const auto peakPower = std::exp(centre - 0.25 * (left - right) * offset);
         // Allow only a small interpolation tolerance at range boundaries.
         if (hz >= lowHz * 0.999 && hz <= highHz * 1.001) {
+            if (isEligible(peakPower)) {
+                const auto midi = noteForFrequency(hz, concertA).midi;
+                if (midi >= 0 && midi < static_cast<int>(result.peaks.size())) {
+                    auto& peak = result.peaks[static_cast<size_t>(midi)];
+                    const auto normalisedPower = 4.0 * peakPower / (windowSum * windowSum);
+                    if (normalisedPower > peak.power) peak = { hz, normalisedPower };
+                }
+            }
             if (peakPower > strongestPower) {
                 strongestPower = peakPower;
                 strongestHz = hz;
@@ -145,15 +183,6 @@ Reading PitchDetector::analyse(const float* samples, double lowHz, double highHz
             }
         }
     }
-    const auto floorCount = last - first + 1;
-    const auto middle = noiseFloor.begin() + floorCount / 2;
-    std::nth_element(noiseFloor.begin(), middle, noiseFloor.begin() + floorCount);
-    const auto floorPower = std::max(*middle, 1e-30);
-    const auto isEligible = [&](double peakPower) {
-        const auto amplitude = 2.0 * std::sqrt(peakPower) / windowSum;
-        return peakPower / floorPower >= 25.0
-            && 20.0 * std::log10(std::max(amplitude, 1e-15)) >= gateDb;
-    };
     // Reject broad noise and peaks below the gate instead of inventing a note.
     if (strongestHz > 0.0 && isEligible(strongestPower)) {
         // Confirm only near-tied competitors (< 1 dB apart). Clear changes or

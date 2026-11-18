@@ -15,14 +15,16 @@ private:
     juce::Typeface::Ptr cartoonTypeface;
 };
 
-class FindNoteEditor final : public juce::AudioProcessorEditor, private juce::Timer {
+class FindNoteEditor final : public juce::AudioProcessorEditor, private juce::Timer, private juce::ListBoxModel {
 public:
     explicit FindNoteEditor(FindNoteProcessor&);
     ~FindNoteEditor() override;
     void paint(juce::Graphics&) override;
     void resized() override;
 private:
-    void timerCallback() override { reading = owner.getReading(); repaint(); }
+    void timerCallback() override;
+    int getNumRows() override { return static_cast<int>(resultRows.size()); }
+    void paintListBoxItem(int row, juce::Graphics&, int width, int height, bool selected) override;
     FindNoteProcessor& owner;
     juce::Image background;
     FindNoteLookAndFeel theme;
@@ -30,6 +32,10 @@ private:
     std::array<juce::Label, 4> labels;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 4> attachments;
     juce::TextButton reset { "Restablecer" };
+    juce::TextButton newAnalysis { "Nuevo analisis" };
+    juce::ListBox resultTable { "Notas detectadas", this };
+    std::vector<int> resultRows;
+    findnote::PeakResults results;
     findnote::Reading reading;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FindNoteEditor)
 };

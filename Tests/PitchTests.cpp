@@ -67,6 +67,58 @@ void testTracking(findnote::PitchDetector& detector, double rate) {
     detector.prepare(rate);
     frequencyIs(right, 440.0, "Prepare clears history for a new playback session");
 }
+
+void testResults(findnote::PitchDetector& detector, double rate) {
+    detector.prepare(rate);
+    findnote::PeakResults results;
+    const auto signal = pair(detector.frameSize(), rate, 220.0, 0.6, 440.0, 0.3);
+    const auto reading = detector.analyse(signal.data());
+    results.add(reading);
+    require(results.principal == 57, "Highest recorded peak is A3");
+    require(std::abs(results.notes[69].frequency - 440.0) < 0.1, "Keep weaker simultaneous A4 peak too");
+    require(std::abs(results.percentage(57) - 80.0) < 0.1 && std::abs(results.percentage(69) - 20.0) < 0.1,
+            "Percentages use normalised peak power: .6^2 / (.6^2 + .3^2) = 80%");
+    require(std::abs(results.notes[57].power - 0.36) < 0.001, "Power comparable across sample rates/window sizes");
+    const auto originalScore = results.percentage(57);
+    for (int i = 0; i < 20; ++i) results.add(detector.analyse(signal.data()));
+    require(results.percentage(57) == originalScore, "Looping same audio does not inflate scores");
+    const auto weaker = pair(detector.frameSize(), rate, 329.6276, 0.4, 440.0, 0.0);
+    results.add(detector.analyse(weaker.data()));
+    require(results.principal == 57 && results.notes[64].power > 0.15, "Later weaker note retained without replacing principal");
+    const auto louder = pair(detector.frameSize(), rate, 329.6276, 0.8, 440.0, 0.0);
+    results.add(detector.analyse(louder.data()));
+    require(results.principal == 64, "New historical maximum becomes principal");
+    double sum = 0.0;
+    for (int midi = 0; midi < 128; ++midi) sum += results.percentage(midi);
+    require(std::abs(sum - 100.0) < 1e-9, "All stored note percentages sum to 100");
+    const auto peakBefore = results.notes[64];
+    results.add(detector.analyse(std::vector<float>(static_cast<size_t>(detector.frameSize()), 0.0f).data()));
+    require(results.principal == 64 && results.notes[64].power == peakBefore.power,
+            "Silence retains captured result");
+    auto invalid = findnote::Reading{};
+    invalid.peaks[69] = {440.0, std::numeric_limits<double>::infinity()};
+    results.add(invalid);
+    require(results.principal == 64, "Invalid peaks cannot poison history");
+    results = {};
+    require(results.principal == -1 && results.percentage(69) == 0.0, "New capture clears notes and percentages");
+    results.add(detector.analyse(signal.data(), 430.0, 450.0));
+    require(results.principal == 69 && results.notes[57].power == 0.0, "Only peaks in selected range are stored");
+    results = {};
+    results.add(detector.analyse(signal.data(), 35.0, 2000.0, -8.0f));
+    require(results.principal == 57 && results.notes[69].power == 0.0, "Gate applies to each captured peak");
+    results = {};
+    const auto calibrated = tone(detector.frameSize(), rate, 480.0);
+    results.add(detector.analyse(calibrated.data(), 35.0, 2000.0, -60.0f, 480.0));
+    require(results.principal == 69, "Stored note mapping respects La4 calibration");
+    // Equal historical maxima retain the first winner rather than oscillating.
+    results = {};
+    findnote::Reading a, b;
+    a.peaks[69] = {440.0, 0.5};
+    b.peaks[57] = {220.0, 0.5};
+    results.add(a);
+    results.add(b);
+    require(results.principal == 69, "Exact tie retains previous principal");
+}
 }
 
 int main() {
@@ -154,6 +206,7 @@ int main() {
                 }
             }
             testTracking(detector, rate);
+            testResults(detector, rate);
         }
         const auto a = findnote::noteForFrequency(440.0);
         require(a.midi == 69 && a.octave == 4 && a.pitchClass == 9 && std::abs(a.cents) < 0.001, "A440 note mapping");

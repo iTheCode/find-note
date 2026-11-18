@@ -1,12 +1,12 @@
 # FindNote
 
-Plugin de audio que selecciona automáticamente el **pico dominante del espectro** y muestra su nota, frecuencia y desviación en cents. Arrástralo a una pista de audio; en una pista MIDI, colócalo después del instrumento. Reproduce el clip o activa la monitorización de entrada.
+Plugin de audio que **guarda los picos del sample** y muestra como nota principal la del pico más fuerte registrado, con frecuencia, cents y una tabla de notas y porcentajes. Arrástralo a una pista de audio; en una pista MIDI, colócalo después del instrumento. Reproduce el clip o activa la monitorización de entrada.
 
 ## Vista previa
 
-Última vista previa del plugin, con el fondo de Cuphead, tipografía cartoon y controles azul neón:
+Última vista previa del plugin, con resultados acumulados, fondo de Cuphead, tipografía cartoon y controles azul neón:
 
-![Último preview de FindNote: referencia automática y controles azul neón](docs/images/findnote.png)
+![FindNote: nota principal, tabla de porcentajes y espectro de máximos retenidos](docs/images/findnote.png)
 
 ### Fondo de Cuphead
 
@@ -31,18 +31,28 @@ La compatibilidad dentro de Ableton y Pro Tools debe verificarse en esos hosts. 
 
 ## Uso
 
-La búsqueda empieza automáticamente entre **35 y 2000 Hz**. El marcador azul sigue el pico seleccionado: no hace falta colocar una referencia manual.
+1. Pulsa **Nuevo análisis** antes de reproducir otro sample.
+2. Reproduce el sample completo. Se buscan todos los picos que superan el umbral y el filtro de prominencia dentro del rango **35–2000 Hz**.
+3. Consulta la **nota principal**, el cuadro de **notas / pico Hz / peso %** y el espectro de máximos retenidos. Puedes desplazar la tabla para ver todas las notas guardadas.
 
-- **Afinación La4:** 440 Hz de fábrica, ajustable entre 400 y 480 Hz. Calibra la relación frecuencia/nota; no mueve el cursor de análisis.
-- **Desde / Hasta:** límites opcionales para la búsqueda. Desde debe ser menor que Hasta.
-- **Umbral:** ignora señales débiles; −60 dB por defecto.
-- **Restablecer:** recupera los valores iniciales. También puedes escribir valores o restablecer un control con doble clic.
+Se conserva el pico de mayor potencia observado para cada nota y octava (por ejemplo, A3 y A4 ocupan filas distintas). La nota principal corresponde al mayor de esos máximos: una nota posterior más débil no la sustituye. Solo cambia si aparece un máximo mayor; en un empate exacto se conserva la principal anterior. La frecuencia y los cents corresponden al pico guardado, no a una media de frecuencias.
 
-Si dos picos difieren menos de **1 dB**, el candidato debe ganar **tres análisis seguidos** para sustituir al anterior. Una ventaja clara o la desaparición del pico previo se aceptan en el análisis actual. El silencio, los cambios de rango o umbral y las discontinuidades reinician el seguimiento. Las frecuencias de notas diferentes no se promedian.
+**Qué significa el porcentaje:** `100 × potencia máxima de esa nota / suma de las potencias máximas de todas las notas guardadas`. La potencia es el cuadrado de la amplitud espectral normalizada por la ventana. Por ejemplo, picos de amplitud 0,6 y 0,3 dan pesos de **80 % y 20 %**. Los pesos suman 100 % antes del redondeo. No son probabilidades de acertar la fundamental, porcentajes de duración ni energía total del sample. Un transitorio fuerte puede ganar; se está priorizando el máximo, como referencia espectral.
 
-La nota corresponde al **pico dominante**, no necesariamente a la fundamental del instrumento. Con 110 Hz de fundamental y un tercer armónico dominante a 330 Hz, se muestra **Mi4 / E4**. Si domina el quinto a 550 Hz, se muestra **Do♯5 / C♯5**. No identifica acordes ni garantiza una nota útil en mezclas, percusión o ruido tonal. La convención de octavas es científica: **La4 = A4 = MIDI 69**.
+Repetir un fragmento no suma puntos: únicamente puede actualizar un máximo. Se registran también los picos secundarios que superan los filtros, aunque no sean el pico dominante de ese instante. No es un reconocedor de acordes: sonidos superpuestos, vibrato y transitorios pueden añadir otras notas al cuadro. El umbral y el rango permiten limitar la captura.
 
-El análisis usa una ventana Blackman-Harris, FFT e interpolación. Su ventana dura **171–186 ms** a las frecuencias de muestreo probadas y se actualiza cada **43–46 ms**, más el tiempo de procesamiento e interfaz. Confirmar un pico casi empatado puede añadir dos actualizaciones, **85–93 ms**. La salida de audio permanece idéntica a la entrada y el plugin declara **cero latencia de audio**. El cálculo se realiza fuera del hilo de audio.
+La nota principal, la tabla y el espectro se conservan durante el silencio y al detener o liberar el audio. **Nuevo análisis** los vacía sin cambiar los controles. El plugin no identifica automáticamente cuándo has cambiado de clip: pulsa ese botón para evitar mezclar samples. Cambiar afinación, rango o umbral también inicia una captura nueva y descarta el audio pendiente. Preparar de nuevo el motor de audio reinicia la captura. Los resultados son temporales; no se guardan con el proyecto del DAW, pero los parámetros sí.
+
+- **Afinación La4:** 440 Hz de fábrica, ajustable entre 400 y 480 Hz. Calibra la relación frecuencia/nota.
+- **Desde / Hasta:** límites opcionales de búsqueda. Desde debe ser menor que Hasta.
+- **Umbral:** ignora señales y picos débiles; −60 dB por defecto.
+- **Restablecer:** recupera los valores iniciales y limpia los resultados. También puedes escribir valores o restablecer un control con doble clic.
+
+El indicador pequeño **Ahora** muestra el pico dominante de la señal actual; se apaga sin señal, sin borrar los resultados. Esa lectura instantánea mantiene la confirmación de tres análisis para competidores a menos de 1 dB. El marcador del espectro y la nota grande representan el máximo guardado.
+
+La principal corresponde al **pico más fuerte registrado**, no necesariamente a la fundamental del instrumento. Con 110 Hz de fundamental y un tercer armónico dominante a 330 Hz, puede mostrar **Mi4 / E4**. Si domina el quinto a 550 Hz, puede mostrar **Do♯5 / C♯5**. La convención de octavas es científica: **La4 = A4 = MIDI 69**.
+
+El análisis usa una ventana Blackman-Harris, FFT e interpolación. Su ventana dura **171–186 ms** a las frecuencias de muestreo probadas y se actualiza cada **43–46 ms**, más el tiempo de procesamiento e interfaz. La salida de audio permanece idéntica a la entrada y el plugin declara **cero latencia de audio**. El cálculo y la captura de máximos se realizan fuera del hilo de audio.
 
 ## Compilar en macOS
 
@@ -184,6 +194,8 @@ En Live 12, activa las fuentes de plugins correspondientes en **Settings → Plu
 ## Validación
 
 Validación local del 12 de noviembre de 2026: **VST3 y AU compilados para arm64 y x86_64**, con ambas suites correctas en cada arquitectura (534 comprobaciones del detector). Las pruebas Intel se ejecutaron mediante Rosetta en este Mac. También se compiló **AAX arm64 experimental**, con ambas suites correctas. Se comprobaron versiones, checksums, contenido, licencias de la fuente y firmas ad hoc después de extraer los ZIP. Las **19 pruebas de release** y actionlint pasaron. El rechazo de VST2 sin SDK también se comprobó. **Windows y la publicación real en GitHub siguen pendientes de su primera ejecución en Actions; no se probaron Ableton ni Pro Tools.**
+
+Validación de la captura acumulada del **18 de noviembre de 2026**: VST3 y AU **arm64** recompilados; **609 comprobaciones** del detector y la suite del procesador correctas. Se verificaron los pesos 80/20 de dos tonos, los máximos independientes de la repetición, picos secundarios, conservación en silencio, nuevo análisis y reinicio al cambiar parámetros. Firmas ad hoc verificadas. El preview superior procede de esta interfaz con tres tonos sucesivos y la reproducción detenida. Esta actualización todavía no se ha validado en Windows, Intel ni dentro de Ableton.
 
 Los scripts nativos ejecutan CTest. Las pruebas incluyen 44.1, 48, 88.2, 96 y 192 kHz, tonos de 35 a 2000 Hz, armónicos dominantes 2.º/3.º/5.º, picos casi empatados, cambios claros, ruido, silencio, rango, calibración y audio sin cambios. El tiempo de ventana también se comprueba.
 

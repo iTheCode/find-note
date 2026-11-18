@@ -8,22 +8,14 @@ Plugin de audio que **guarda los picos del sample** y muestra como nota principa
 
 ![FindNote: nota principal, tabla de porcentajes y espectro de máximos retenidos](docs/images/findnote.png)
 
-### Fondo de Cuphead
-
-FindNote conserva esta imagen como fondo. El archivo [assets/cuphead.jpeg](assets/cuphead.jpeg) se integra en el plugin al compilar; no necesitas tener la imagen en una carpeta externa para usarlo.
-
-![Imagen de Cuphead utilizada como fondo de FindNote](assets/cuphead.jpeg)
-
-Ambas imágenes están incluidas en el proyecto y usan rutas relativas para que se vean también en GitHub.
-
 ## Formatos y plataformas
 
-| Formato | macOS Apple Silicon | macOS Intel | Windows x64 |
-| --- | --- | --- | --- |
-| VST3 | Incluido | Incluido | Incluido |
-| AU / Audio Units | Incluido | Incluido | No disponible en Windows |
-| VST2 / VST | Opcional: requiere SDK VST2 | Opcional: requiere SDK VST2 | Opcional: requiere SDK VST2 |
-| AAX / Pro Tools | Compilación experimental opcional | Compilación experimental opcional | Compilación experimental opcional |
+| Formato          | macOS Apple Silicon               | macOS Intel                       | Windows x64                       |
+| ---------------- | --------------------------------- | --------------------------------- | --------------------------------- |
+| VST3             | Incluido                          | Incluido                          | Incluido                          |
+| AU / Audio Units | Incluido                          | Incluido                          | No disponible en Windows          |
+| VST2 / VST       | Opcional: requiere SDK VST2       | Opcional: requiere SDK VST2       | Opcional: requiere SDK VST2       |
+| AAX / Pro Tools  | Compilación experimental opcional | Compilación experimental opcional | Compilación experimental opcional |
 
 Las compilaciones predeterminadas generan **VST3 + AU en macOS** y **VST3 en Windows**. VST2 y VST3 son formatos diferentes; cambiar la extensión no convierte uno en otro. El SDK VST2 no está incluido. JUCE contiene el SDK AAX en la revisión fijada, pero generar un `.aaxplugin` no lo habilita automáticamente para Pro Tools: la distribución requiere el proceso de firma de Avid/PACE. No se incluye firma PACE, certificado Developer ID, notarización de Apple ni firma Authenticode de Windows.
 
@@ -142,12 +134,12 @@ FindNote-X.Y.Z-windows-x64.zip.sha256
 
 Cada ZIP contiene carpetas por formato (`VST3/`, `AU/` cuando corresponda, y las opcionales `VST/` o `AAX/`) más los avisos de la fuente en `licenses/`.
 
-| Commit | Incremento |
-| --- | --- |
-| `fix: corrige la detección` o `perf: reduce CPU` | Parche |
-| `feat: añade un formato` | Menor |
-| `feat!: cambia parámetros` o footer `BREAKING CHANGE:` | Mayor |
-| `ci:`, `docs:` o `chore:` sin ruptura | Sin release |
+| Commit                                                 | Incremento  |
+| ------------------------------------------------------ | ----------- |
+| `fix: corrige la detección` o `perf: reduce CPU`       | Parche      |
+| `feat: añade un formato`                               | Menor       |
+| `feat!: cambia parámetros` o footer `BREAKING CHANGE:` | Mayor       |
+| `ci:`, `docs:` o `chore:` sin ruptura                  | Sin release |
 
 La primera release publicable, sin tags anteriores, será **1.0.0**. No es obligatorio que el primer commit sea `feat:`: cualquier cambio reconocido como publicable puede iniciarla. En un squash importa el mensaje final que llega a `main`.
 
@@ -181,13 +173,13 @@ Sube estos archivos conservando las carpetas y los archivos ocultos `.github/`, 
 
 Descomprime el paquete de tu sistema y copia el plugin completo desde la carpeta del formato:
 
-| Sistema / formato | Carpeta habitual |
-| --- | --- |
-| macOS VST3 | `~/Library/Audio/Plug-Ins/VST3/` |
-| macOS AU | `~/Library/Audio/Plug-Ins/Components/` |
-| macOS VST2 | `~/Library/Audio/Plug-Ins/VST/` |
-| Windows VST3 | `C:\Program Files\Common Files\VST3\` |
-| Windows VST2 | La carpeta VST2 configurada en tu host |
+| Sistema / formato | Carpeta habitual                       |
+| ----------------- | -------------------------------------- |
+| macOS VST3        | `~/Library/Audio/Plug-Ins/VST3/`       |
+| macOS AU          | `~/Library/Audio/Plug-Ins/Components/` |
+| macOS VST2        | `~/Library/Audio/Plug-Ins/VST/`        |
+| Windows VST3      | `C:\Program Files\Common Files\VST3\`  |
+| Windows VST2      | La carpeta VST2 configurada en tu host |
 
 En Live 12, activa las fuentes de plugins correspondientes en **Settings → Plug-Ins**, pulsa **Rescan** y busca FindNote. AU solo funciona en macOS; AAX corresponde a Pro Tools. La instalación no se ejecuta como parte del build.
 
@@ -215,9 +207,3 @@ ctest --test-dir build-core -C Release --output-on-failure
 ```
 
 Los registros locales están en `validation/`, excluida del repositorio. Una compilación correcta y las pruebas sintéticas no sustituyen una prueba en Ableton o Pro Tools con instrumentos reales.
-
-## Dependencias y recursos
-
-JUCE 8.0.17-security está fijado al commit `dabd5ad13cd869cba41046947fffc8e5ce5cd662`. Su [licencia](https://github.com/juce-framework/JUCE/blob/dabd5ad13cd869cba41046947fffc8e5ce5cd662/LICENSE.md) ofrece AGPLv3 o licencia comercial; la licencia del código propio de FindNote sigue pendiente de elección y no se ha añadido un `LICENSE` que imponga una decisión al autor.
-
-El fondo de Cuphead fue proporcionado por el usuario. Este repositorio no acredita una autorización de redistribución de esa imagen. La fuente **Luckiest Guy** de Astigmatic está disponible bajo Apache 2.0; sus archivos `LICENSE.txt` y `NOTICE.txt` se conservan en `assets/fonts/` y en los paquetes. La fuente está integrada una sola vez en el binario; no se copia un segundo TTF al bundle. No es la tipografía oficial de Cuphead.
